@@ -24,7 +24,7 @@ from matplotlib.figure import Figure
 import matplotlib.pyplot as plt
 
 MATERIALS = {
-    "PZT-4": {
+    "PZT-4": {              # Цирконат-титанат свинца
         "c11E": 13.9e10,    # Па
         "c12E": 7.78e10,
         "c13E": 7.43e10,
@@ -37,20 +37,20 @@ MATERIALS = {
         "eps11": 645e-12,
         "rho":  7500.0,     # кг/м³
     },
-    "PZT-5A": {
+    "PZT-5A": {             # Мягкий цирконат-титанат свинца
         "c11E": 12.1e10,
         "c12E": 7.54e10,
         "c13E": 7.52e10,
         "c33E": 11.1e10,
         "c44E": 2.11e10,
-        "e31":  -5.35,
-        "e33":  15.78,
-        "e15":  12.29,
+        "e31":  -5.4,
+        "e33":  15.8,
+        "e15":  12.3,
         "eps33": 830e-12,
         "eps11": 916e-12,
         "rho":  7750.0,
     },
-    "BaTiO3": {
+    "BaTiO3": {             # Титанат бария
         "c11E": 15.0e10,
         "c12E": 6.60e10,
         "c13E": 6.60e10,
@@ -101,13 +101,15 @@ class PiezoModel:
         # модифицированные упругие константы (плоское напряжённое состояние)
         self.c11s = c11e * (1.0 - (c13e**2) / (c11e * c33e))
         self.c12s = c12e * (1.0 - (c13e**2) / (c12e * c33e))
-        # эффективные пьезоэлектрические модули
+        # пьезоэлектрические модули
         self.e31s = e31 * (1.0 - c13e * e33 / (c33e * e31))
         self.e15s = e15 * (1.0 - c44e * e33 / (c33e * e15))
+        eps11s = eps11 + e15 * e33 / c33e
+        eps33s = eps33 + e33 ** 2 / c33e
         # параметры для уравнения потенциала
-        self.nu2  = eps11 / eps33         # nu^2 = eps11/eps33
+        self.nu2  = eps33s / eps11s         # nu^2 = eps33^*/eps11^*
         self.nu   = np.sqrt(abs(self.nu2))
-        self.mu   = self.e15s / eps33
+        self.mu   = e15 * c13e / (c33e * eps11s)
 
     def kappa(self, omega: float) -> float:
         """Волновое число κ = sqrt(ρ ω² / c11*)"""
@@ -165,7 +167,8 @@ class PiezoModel:
             else:
                 factor = self.mu * amp * (h**2 / (np.pi**2 * 2.0 * self.nu))
                 dn = (factor * ((-1) ** (n + 1)) * j1(kap * self.a)
-                      * (kap ** 2 / (n ** 2 + (kap * h / (self.nu * 2.0 * np.pi * n)) ** 2)))
+                      * (kap ** 2 / (n ** 2 + (kap * h / (self.nu * 2.0 * np.pi)) ** 2)))
+
             r_arg = self.nu * r * lam_n
             ratio_i = i0e(r_arg) / i1e_a * np.exp((r - self.a) * self.nu * lam_n)
 
@@ -186,7 +189,7 @@ class PiezoModel:
                     w_res = brentq(lambda w: self.delta_det(self.kappa(w)),
                                    omegas[i], omegas[i + 1], xtol=1e-3)
                     resonances.append(w_res / (2.0 * np.pi))
-                except LookupError:
+                except ValueError:
                     pass
         return resonances
 
@@ -310,8 +313,8 @@ class MainWindow(QMainWindow):
         # геометрия
         g_geo = QGroupBox("Геометрия пластины")
         g_geo_lay = QVBoxLayout(g_geo)
-        self.w_a  = ParamBox("a (радиус)", 0.020,  "м",  1e-4, 0.5, decimals=4)
-        self.w_h  = ParamBox("h (толщина)", 0.001, "м",  1e-5, 0.05, decimals=5)
+        self.w_a  = ParamBox("a (радиус)", 0.200,  "м",  1e-4, 0.5, decimals=4)
+        self.w_h  = ParamBox("h (толщина)", 0.050, "м",  1e-5, 0.05, decimals=5)
         g_geo_lay.addWidget(self.w_a)
         g_geo_lay.addWidget(self.w_h)
         left_lay.addWidget(g_geo)
@@ -319,8 +322,8 @@ class MainWindow(QMainWindow):
         # возбуждение
         g_exc = QGroupBox("Возбуждение")
         g_exc_lay = QVBoxLayout(g_exc)
-        self.w_v0   = ParamBox("V₀",         1.0,    "В",    0.001, 1000, decimals=3)
-        self.w_freq = ParamBox("f",           50000,  "Гц",   100,   1e6,  decimals=0)
+        self.w_v0   = ParamBox("V₀",         10.0,    "В",    0.001, 1000, decimals=3)
+        self.w_freq = ParamBox("f",           60000,  "Гц",   100,   1e6,  decimals=0)
         g_exc_lay.addWidget(self.w_v0)
         g_exc_lay.addWidget(self.w_freq)
         left_lay.addWidget(g_exc)
@@ -550,7 +553,7 @@ class MainWindow(QMainWindow):
             c12s = model.c12s
             e31s = model.e31s
             v0 = model.v0
-            A = 2.0 * v0 * model.a * e31s / (h * model.delta_det(kap))  # (С учетом исправления знака ниже!)
+            A = 2.0 * v0 * model.a * e31s / (h * model.delta_det(kap))  # (С учетом изменения знака ниже)
             j1_over_r = np.zeros_like(r)
             j1_over_r[1:] = j1(kap * r[1:]) / r[1:]
             j1_over_r[0] = kap / 2.0
@@ -560,7 +563,7 @@ class MainWindow(QMainWindow):
 
             self._sigma_rr = sigma_rr
 
-            # первая вкладка
+            # 1 вкладка
             ax = self.canvas1.axes[0]
             ax.cla()
             ax.plot(r * 1e3, u * 1e9, color="#89b4fa", label=f"f = {self.w_freq.value:.0f} Гц")
@@ -573,7 +576,7 @@ class MainWindow(QMainWindow):
             self.canvas1.fig.tight_layout()
             self.canvas1.draw()
 
-            # вторая вкладка
+            # 2 вкладка
             ax2 = self.canvas2.axes[0]
             ax2.cla()
             ax2.semilogy(freqs / 1e3, u_freq * 1e9, color="#a6e3a1", lw=1.8)
@@ -590,13 +593,13 @@ class MainWindow(QMainWindow):
             self.canvas2.fig.tight_layout()
             self.canvas2.draw()
 
-            # третья вкладка
+            # 3 вкладка
             self._replot_phi()
 
-            # четвертая вкладка
+            # 4 вкладка
             self._replot_phi_map()
 
-            # пятая вкладка
+            # 5 вкладка
             ax5 = self.canvas5.axes[0]
             ax5.cla()
             ax5.plot(r * 1e3, sigma_rr / 1e6, color="#fab387", label="σ_rr(r)")
@@ -609,7 +612,7 @@ class MainWindow(QMainWindow):
             self.canvas5.fig.tight_layout()
             self.canvas5.draw()
 
-            # шестая вкладка
+            # 6 вкладка
             self._replot_shape()
 
             if status_bar is not None:
